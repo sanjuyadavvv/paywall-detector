@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8" />
+  <style>
+    body {
+      width: 320px;
+      margin: 0;
+      padding: 16px;
+      font-family: "Segoe UI", system-ui, sans-serif;
+      color: #1a1a1a;
+      background: #fafafa;
+    }
+    h1 {
+      font-size: 15px;
+      margin: 0 0 4px;
+      font-weight: 700;
+    }
+    .domain {
+      font-size: 12px;
+      color: #666;
+      margin-bottom: 12px;
+      word-break: break-all;
+    }
+    .card {
+      border-radius: 10px;
+      padding: 12px 14px;
+      margin-bottom: 12px;
+    }
+    .card.FREE { background: #e6f4ea; color: #1e7a34; }
+    .card.LIMITED_FREE { background: #fff8e6; color: #7a5a00; }
+    .card.LIKELY_PAID { background: #fff0e0; color: #8a4500; }
+    .card.PAID_REQUIRED { background: #fdeaea; color: #7a1212; }
+    .card.UNKNOWN { background: #eef0f2; color: #444; }
+    .verdict {
+      font-size: 16px;
+      font-weight: 700;
+      margin-bottom: 4px;
+    }
+    .reason {
+      font-size: 12px;
+      line-height: 1.45;
+      opacity: 0.95;
+    }
+    .meta {
+      margin-top: 10px;
+      font-size: 11px;
+      opacity: 0.8;
+      display: grid;
+      gap: 3px;
+    }
+    button {
+      width: 100%;
+      padding: 9px;
+      border: none;
+      border-radius: 8px;
+      background: #1f2937;
+      color: #fff;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    button:hover { background: #111827; }
+    button:disabled { opacity: 0.65; cursor: default; }
+    .hint {
+      margin-top: 10px;
+      font-size: 11px;
+      color: #777;
+      line-height: 1.4;
+    }
+  </style>
+</head>
+<body>
+  <h1>FreeOrNot</h1>
+  <div class="domain" id="domain">—</div>
+  <div class="card UNKNOWN" id="card">
+    <div class="verdict" id="verdict">Checking…</div>
+    <div class="reason" id="reason">Looking up this domain in the knowledge base.</div>
+    <div class="meta" id="meta"></div>
+  </div>
+  <button id="report-btn">Report paywall on this site</button>
+  <p class="hint">Warns early if download/export is likely to require payment — not a keyword scanner.</p>
+  <script src="popup.js"></script>
+</body>
+</html>

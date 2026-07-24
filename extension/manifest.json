@@ -1,0 +1,28 @@
+{
+  "manifest_version": 3,
+  "name": "FreeOrNot — Paywall Detector",
+  "version": "2.0.1",
+  "description": "Warns you within seconds if a site is likely to charge before you can download or export your work.",
+  "permissions": ["storage", "webNavigation", "activeTab"],
+  "host_permissions": ["<all_urls>", "http://localhost:8787/*"],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"],
+      "css": ["banner.css"],
+      "run_at": "document_idle"
+    }
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "FreeOrNot"
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  }
+}

@@ -1,0 +1,95 @@
+#pwd-banner {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 2147483647;
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 12px 16px;
+  font-family: "Segoe UI", system-ui, sans-serif;
+  font-size: 13px;
+  line-height: 1.4;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.08);
+  animation: pwd-slide-down 0.22s ease-out;
+}
+
+@keyframes pwd-slide-down {
+  from { transform: translateY(-100%); }
+  to { transform: translateY(0); }
+}
+
+.pwd-main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.pwd-title {
+  font-weight: 700;
+  font-size: 13px;
+}
+
+.pwd-text {
+  opacity: 0.95;
+}
+
+.pwd-meta {
+  font-size: 11px;
+  opacity: 0.75;
+  margin-top: 2px;
+}
+
+.pwd-ok {
+  background: #e6f4ea;
+  color: #1e7a34;
+}
+
+.pwd-warn {
+  background: #fff4e5;
+  color: #7a4a00;
+}
+
+.pwd-danger {
+  background: #fdeaea;
+  color: #7a1212;
+}
+
+.pwd-info {
+  background: #f1f3f5;
+  color: #3d4450;
+}
+
+#pwd-banner button {
+  border: none;
+  border-radius: 6px;
+  padding: 6px 12px;
+  font-size: 12px;
+  cursor: pointer;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+#pwd-banner .pwd-report {
+  background: rgba(0, 0, 0, 0.08);
+  color: inherit;
+}
+
+#pwd-banner .pwd-report:hover {
+  background: rgba(0, 0, 0, 0.14);
+}
+
+#pwd-banner .pwd-report:disabled {
+  opacity: 0.7;
+  cursor: default;
+}
+
+#pwd-banner .pwd-close {
+  background: transparent;
+  color: inherit;
+  font-size: 16px;
+  padding: 2px 8px;
+}

@@ -1,0 +1,404 @@
+{
+  "pdfleader.com": {
+    "classified_at": 1784614873.742729,
+    "source": "ai_force",
+    "result": {
+      "verdict": "LIKELY_PAID",
+      "confidence": 0.9,
+      "reason": "Operated by Lopital Limited, which typically requires a paid subscription or trial to download processed PDF files.",
+      "features": {
+        "limited_free_export": false,
+        "adds_watermark": false,
+        "locks_high_res": false,
+        "requires_payment_before_download": true,
+        "requires_payment_before_submit": false
+      },
+      "last_verified_at": "2026-07-21T06:21:13Z",
+      "version": 1,
+      "_model": "gemini-flash-latest",
+      "domain": "pdfleader.com",
+      "community_reports": 0,
+      "source": "ai_force",
+      "analysis_status": "ready"
+    }
+  },
+  "canva.com": {
+    "classified_at": 1784612549.2471535,
+    "source": "ai_force",
+    "result": {
+      "verdict": "LIMITED_FREE",
+      "confidence": 0.95,
+      "reason": "Users can design and download for free, but premium elements add watermarks and advanced export options like high-resolution scaling are locked behind Pro.",
+      "features": {
+        "limited_free_export": true,
+        "adds_watermark": true,
+        "locks_high_res": true,
+        "requires_payment_before_download": false,
+        "requires_payment_before_submit": false
+      },
+      "last_verified_at": "2026-07-21T05:42:29Z",
+      "version": 1,
+      "_model": "gemini-flash-latest",
+      "domain": "canva.com",
+      "community_reports": 0,
+      "source": "ai_force",
+      "analysis_status": "ready"
+    }
+  },
+  "claude.ai": {
+    "classified_at": 1784614090.7646012,
+    "source": "ai_force",
+    "result": {
+      "verdict": "FREE",
+      "confidence": 1.0,
+      "reason": "Claude allows free use and copying of generated text, and this is a standard OAuth authorization step.",
+      "features": {
+        "limited_free_export": false,
+        "adds_watermark": false,
+        "locks_high_res": false,
+        "requires_payment_before_download": false,
+        "requires_payment_before_submit": false
+      },
+      "last_verified_at": "2026-07-21T06:08:10Z",
+      "version": 1,
+      "_model": "gemini-flash-latest",
+      "domain": "claude.ai",
+      "community_reports": 0,
+      "source": "ai_force",
+      "analysis_status": "ready"
+    }
+  },
+  "platform.claude.com": {
+    "classified_at": 1784613610.2945771,
+    "source": "ai",
+    "result": {
+      "verdict": "FREE",
+      "confidence": 0.9,
+      "reason": "This is an OAuth authentication success page for a developer tool, not a bait-and-switch creation site.",
+      "features": {
+        "limited_free_export": false,
+        "adds_watermark": false,
+        "locks_high_res": false,
+        "requires_payment_before_download": false,
+        "requires_payment_before_submit": false
+      },
+      "last_verified_at": "2026-07-21T06:00:10Z",
+      "version": 1,
+      "_model": "gemini-flash-latest",
+      "domain": "platform.claude.com",
+      "community_reports": 0,
+      "source": "ai",
+      "analysis_status": "ready"
+    }
+  },
+  "pdf24.org": {
+    "classified_at": 1784618059.873583,
+    "source": "ai_force",
+    "result": {
+      "verdict": "FREE",
+      "confidence": 1.0,
+      "reason": "All PDF tools and downloads are completely free of charge with no paywalls or watermarks.",
+      "features": {
+        "limited_free_export": false,
+        "adds_watermark": false,
+        "locks_high_res": false,
+        "requires_payment_before_download": false,
+        "requires_payment_before_submit": false
+      },
+      "last_verified_at": "2026-07-21T07:14:19Z",
+      "version": 1,
+      "_model": "gemini-flash-latest",
+      "domain": "pdf24.org",
+      "community_reports": 0,
+      "source": "ai_force",
+      "analysis_status": "ready"
+    }
+  },
+  "chatgpt.com": {
+    "classified_at": 1784619272.380956,
+    "source": "ai_force",
+    "result": {
+      "verdict": "FREE",
+      "confidence": 1.0,
+      "reason": "Core chat text and outputs are freely copyable without payment.",
+      "features": {
+        "limited_free_export": false,
+        "adds_watermark": false,
+        "locks_high_res": false,
+        "requires_payment_before_download": false,
+        "requires_payment_before_submit": false
+      },
+      "last_verified_at": "2026-07-21T07:34:32Z",
+      "version": 1,
+      "_model": "gemini-flash-latest",
+      "domain": "chatgpt.com",
+      "community_reports": 0,
+      "source": "ai_force",
+      "analysis_status": "ready"
+    }
+  },
+  "instagram.com": {
+    "classified_at": 1784620909.0735738,
+    "source": "ai",
+    "result": {
+      "verdict": "FREE",
+      "confidence": 1.0,
+      "reason": "Instagram is a free social media platform where posting, viewing, and sharing content does not require payment.",
+      "features": {
+        "limited_free_export": false,
+        "adds_watermark": false,
+        "locks_high_res": false,
+        "requires_payment_before_download": false,
+        "requires_payment_before_submit": false
+      },
+      "last_verified_at": "2026-07-21T08:01:49Z",
+      "version": 1,
+      "_model": "gemini-flash-latest",
+      "domain": "instagram.com",
+      "community_reports": 0,
+      "source": "ai",
+      "analysis_status": "ready"
+    }
+  },
+  "youtube.com": {
+    "classified_at": 1784623076.4455805,
+    "source": "ai_force",
+    "result": {
+      "verdict": "FREE",
+      "confidence": 1.0,
+      "reason": "YouTube is a free video streaming platform where users can watch content without paying to download or export.",
+      "features": {
+        "limited_free_export": false,
+        "adds_watermark": false,
+        "locks_high_res": false,
+        "requires_payment_before_download": false,
+        "requires_payment_before_submit": false
+      },
+      "last_verified_at": "2026-07-21T08:37:56Z",
+      "version": 1,
+      "_model": "gemini-flash-latest",
+      "domain": "youtube.com",
+      "community_reports": 0,
+      "source": "ai_force",
+      "analysis_status": "ready"
+    }
+  },
+  "google.com": {
+    "classified_at": 1784624857.1915743,
+    "source": "ai",
+    "result": {
+      "verdict": "FREE",
+      "confidence": 1.0,
+      "reason": "This is a standard Google search utility page which is completely free to use.",
+      "features": {
+        "limited_free_export": false,
+        "adds_watermark": false,
+        "locks_high_res": false,
+        "requires_payment_before_download": false,
+        "requires_payment_before_submit": false
+      },
+      "last_verified_at": "2026-07-21T09:07:37Z",
+      "version": 1,
+      "_model": "gemini-flash-latest",
+      "domain": "google.com",
+      "community_reports": 0,
+      "source": "ai",
+      "analysis_status": "ready"
+    }
+  },
+  "myntra.com": {
+    "classified_at": 1784624893.120342,
+    "source": "ai",
+    "result": {
+      "verdict": "FREE",
+      "confidence": 1.0,
+      "reason": "This is an e-commerce shopping website, not a digital creation or document generation tool.",
+      "features": {
+        "limited_free_export": false,
+        "adds_watermark": false,
+        "locks_high_res": false,
+        "requires_payment_before_download": false,
+        "requires_payment_before_submit": false
+      },
+      "last_verified_at": "2026-07-21T09:08:13Z",
+      "version": 1,
+      "_model": "gemini-flash-latest",
+      "domain": "myntra.com",
+      "community_reports": 0,
+      "source": "ai",
+      "analysis_status": "ready"
+    }
+  },
+  "adobe.com": {
+    "classified_at": 1784624982.3308046,
+    "source": "ai_force",
+    "result": {
+      "verdict": "LIKELY_PAID",
+      "confidence": 0.9,
+      "reason": "Adobe Acrobat AI Assistant is a premium add-on service that requires a paid subscription after a limited free trial.",
+      "features": {
+        "limited_free_export": true,
+        "adds_watermark": false,
+        "locks_high_res": false,
+        "requires_payment_before_download": false,
+        "requires_payment_before_submit": false
+      },
+      "last_verified_at": "2026-07-21T09:09:42Z",
+      "version": 1,
+      "_model": "gemini-flash-latest",
+      "domain": "adobe.com",
+      "community_reports": 0,
+      "source": "ai_force",
+      "analysis_status": "ready"
+    }
+  },
+  "gemini.google.com": {
+    "classified_at": 1784625033.266301,
+    "source": "ai",
+    "result": {
+      "verdict": "FREE",
+      "confidence": 1.0,
+      "reason": "Core chat and text export features are completely free to use.",
+      "features": {
+        "limited_free_export": false,
+        "adds_watermark": false,
+        "locks_high_res": false,
+        "requires_payment_before_download": false,
+        "requires_payment_before_submit": false
+      },
+      "last_verified_at": "2026-07-21T09:10:33Z",
+      "version": 1,
+      "_model": "gemini-flash-latest",
+      "domain": "gemini.google.com",
+      "community_reports": 0,
+      "source": "ai",
+      "analysis_status": "ready"
+    }
+  },
+  "aistudio.google.com": {
+    "classified_at": 1784625057.4520075,
+    "source": "ai",
+    "result": {
+      "verdict": "FREE",
+      "confidence": 0.95,
+      "reason": "Google AI Studio is a developer tool that allows free prototyping, API key generation, and code exporting within generous free tier limits.",
+      "features": {
+        "limited_free_export": false,
+        "adds_watermark": false,
+        "locks_high_res": false,
+        "requires_payment_before_download": false,
+        "requires_payment_before_submit": false
+      },
+      "last_verified_at": "2026-07-21T09:10:57Z",
+      "version": 1,
+      "_model": "gemini-flash-latest",
+      "domain": "aistudio.google.com",
+      "community_reports": 0,
+      "source": "ai",
+      "analysis_status": "ready"
+    }
+  },
+  "spectacom.in": {
+    "classified_at": 1784625226.598903,
+    "source": "ai",
+    "result": {
+      "verdict": "FREE",
+      "confidence": 0.9,
+      "reason": "This is an informational corporate website for an event and technology company, not a self-service creation tool with download gates.",
+      "features": {
+        "limited_free_export": false,
+        "adds_watermark": false,
+        "locks_high_res": false,
+        "requires_payment_before_download": false,
+        "requires_payment_before_submit": false
+      },
+      "last_verified_at": "2026-07-21T09:13:46Z",
+      "version": 1,
+      "_model": "gemini-flash-latest",
+      "domain": "spectacom.in",
+      "community_reports": 0,
+      "source": "ai",
+      "analysis_status": "ready"
+    }
+  },
+  "awwwards.com": {
+    "classified_at": 1784627973.4275093,
+    "source": "heuristic_force",
+    "result": {
+      "verdict": "FREE",
+      "confidence": 0.45,
+      "reason": "Page does not look like a create-and-download or apply-and-pay flow.",
+      "features": {},
+      "last_verified_at": "2026-07-21T09:59:33Z",
+      "domain": "awwwards.com",
+      "community_reports": 0,
+      "source": "heuristic_force",
+      "version": 1,
+      "analysis_status": "ready"
+    }
+  },
+  "excalidraw.com": {
+    "classified_at": 1784748856.2137482,
+    "source": "ai",
+    "result": {
+      "verdict": "FREE",
+      "confidence": 1.0,
+      "reason": "Excalidraw allows users to create, save, and export canvas drawings completely free without payment.",
+      "features": {
+        "limited_free_export": false,
+        "adds_watermark": false,
+        "locks_high_res": false,
+        "requires_payment_before_download": false,
+        "requires_payment_before_submit": false
+      },
+      "last_verified_at": "2026-07-22T19:34:16Z",
+      "version": 1,
+      "_model": "gemini-flash-latest",
+      "domain": "excalidraw.com",
+      "community_reports": 0,
+      "source": "ai",
+      "analysis_status": "ready"
+    }
+  },
+  "carbon.now.sh": {
+    "classified_at": 1784749491.979323,
+    "source": "ai",
+    "result": {
+      "verdict": "FREE",
+      "confidence": 1.0,
+      "reason": "Carbon is a completely free, open-source tool for creating and exporting code snippet images.",
+      "features": {
+        "limited_free_export": false,
+        "adds_watermark": false,
+        "locks_high_res": false,
+        "requires_payment_before_download": false,
+        "requires_payment_before_submit": false
+      },
+      "last_verified_at": "2026-07-22T19:44:51Z",
+      "version": 1,
+      "_model": "gemini-flash-latest",
+      "domain": "carbon.now.sh",
+      "community_reports": 0,
+      "source": "ai",
+      "analysis_status": "ready"
+    }
+  },
+  "regex101.com": {
+    "classified_at": 1784749805.264294,
+    "source": "zero_shot",
+    "result": {
+      "verdict": "FREE",
+      "confidence": 0.65,
+      "reason": "Tool-like page with generic upgrade language, no direct payment gate found.",
+      "features": {
+        "requires_payment_before_download": false
+      },
+      "last_verified_at": "2026-07-22T19:50:05Z",
+      "domain": "regex101.com",
+      "community_reports": 0,
+      "source": "zero_shot",
+      "version": 1,
+      "analysis_status": "ready"
+    }
+  }
+}
