@@ -763,7 +763,4 @@ def get_reports(domain):
 
 
 if __name__ == "__main__":
-    print(f"AI enabled: {bool(GEMINI_API_KEY)}")
-    print(f"Classified domains: {len(load_classified())}")
-    print(f"Optional seed domains: {len(load_seed())}")
-    app.run(port=PORT, debug=True)
+    app.run(host="0.0.0.0", port=PORT)
