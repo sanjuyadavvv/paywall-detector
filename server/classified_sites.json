@@ -400,5 +400,21 @@
       "version": 1,
       "analysis_status": "ready"
     }
+  },
+  "app.napkin.ai": {
+    "classified_at": 1784869630.1178365,
+    "source": "zero_shot",
+    "result": {
+      "verdict": "FREE",
+      "confidence": 0.72,
+      "reason": "Page does not look like a create-and-download or apply-and-pay flow.",
+      "features": {},
+      "last_verified_at": "2026-07-24T05:07:10Z",
+      "domain": "app.napkin.ai",
+      "community_reports": 0,
+      "source": "zero_shot",
+      "version": 1,
+      "analysis_status": "ready"
+    }
   }
 }
