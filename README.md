@@ -22,7 +22,6 @@ Hardcoded seed domains are **optional bootstrap only**. The product learns from 
 ```powershell
 cd server
 pip install -r requirements.txt
-# Put GEMINI_API_KEY in server/.env (required for first-time analysis of unknown sites)
 python server.py
 ```
 
