@@ -82,7 +82,21 @@
   background: rgba(0, 0, 0, 0.14);
 }
 
-#pwd-banner .pwd-report:disabled {
+#pwd-banner .pwd-report.pwd-free {
+  background: transparent;
+  border: 1px solid rgba(0, 0, 0, 0.18);
+}
+
+#pwd-banner .pwd-mute {
+  background: transparent;
+  color: inherit;
+  font-size: 11px;
+  padding: 6px 8px;
+  opacity: 0.85;
+}
+
+#pwd-banner .pwd-report:disabled,
+#pwd-banner .pwd-mute:disabled {
   opacity: 0.7;
   cursor: default;
 }

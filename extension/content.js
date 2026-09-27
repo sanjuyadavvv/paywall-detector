@@ -371,7 +371,9 @@
 // silently — no banner is injected into the page.
 
 (function () {
-  console.log("FreeOrNot content.js loaded — v2 (silent popup mode)");
+  if (!/^https?:$/.test(location.protocol)) return;
+  if (location.hostname === "localhost" || location.hostname.endsWith(".local")) return;
+  // console.log("FreeOrNot content.js loaded — v3 (banner + mute)");
   let bannerShown = false;
   let checkStarted = false;
   let classifyStarted = false;
@@ -430,10 +432,13 @@
 
   function metaLine(result) {
     const confidence = Math.round(Number(result?.confidence || 0) * 100);
-    const reports = Number(result?.community_reports || 0);
+    const paid = Number(result?.community_paid ?? result?.community_reports ?? 0);
+    const free = Number(result?.community_free || 0);
     const days = daysAgo(result?.last_verified_at);
     const source = result?.source ? `Source: ${result.source}` : null;
-    const parts = [`Confidence: ${confidence}%`, `Community reports: ${reports}`];
+    const type = result?.site_type ? `Type: ${result.site_type}` : null;
+    const parts = [`Confidence: ${confidence}%`, `Paid reports: ${paid}`, `Free reports: ${free}`];
+    if (type) parts.unshift(type);
     if (days != null) {
       parts.push(
         days === 0 ? "Last verified: today" : `Last verified: ${days} day${days === 1 ? "" : "s"} ago`
@@ -443,11 +448,60 @@
     return parts.join(" · ");
   }
 
+  function shouldShowBanner(result) {
+    const verdict = String(result?.verdict || "UNKNOWN").toUpperCase().replace(/ /g, "_");
+    return verdict === "LIMITED_FREE" || verdict === "LIKELY_PAID" || verdict === "PAID_REQUIRED";
+  }
+
+  function muteThisSite() {
+    chrome.runtime.sendMessage({
+      type: "SET_MUTED",
+      payload: { domain: location.hostname, muted: true }
+    });
+    const existing = document.getElementById("pwd-banner");
+    if (existing) existing.remove();
+  }
+
+  function sendVote(stance, btn) {
+    chrome.runtime.sendMessage(
+      {
+        type: "REPORT_SITE",
+        payload: {
+          domain: location.hostname,
+          url: location.href,
+          stance,
+          note: `User confirmed from banner (${stance})`,
+          report_type: stance === "free" ? "false_positive" : "paywall_before_export",
+          reportedAt: Date.now()
+        }
+      },
+      (res) => {
+        if (!btn) return;
+        if (res?.ok) {
+          if (res.already_reported) btn.textContent = "Already reported";
+          else if (res.status_updated) btn.textContent = "Reported";
+          else {
+            const needed = Number(res.reports_needed || 3);
+            const have = stance === "free" ? Number(res.community_free || 0) : Number(res.uniqueReporters || 0);
+            btn.textContent = `Reported (${have}/${needed})`;
+          }
+          btn.disabled = true;
+          const other = document.getElementById(stance === "free" ? "pwd-report-paid-btn" : "pwd-report-free-btn");
+          if (other) other.disabled = true;
+        } else if (res?.rate_limited) {
+          btn.textContent = "Too many reports";
+        } else {
+          btn.textContent = "Report failed";
+        }
+      }
+    );
+  }
+
   function showBanner(result) {
     const verdict = String(result?.verdict || "UNKNOWN").toUpperCase().replace(/ /g, "_");
     const cfg = COPY[verdict] || COPY.UNKNOWN;
 
-    if (verdict === "FREE") {
+    if (!shouldShowBanner(result)) {
       bannerShown = true;
       lastBannerSignature = null;
       const existing = document.getElementById("pwd-banner");
@@ -455,8 +509,11 @@
       return;
     }
 
-    // Skip re-rendering the exact same result we're already showing — avoids
-    // banner flicker when duplicate classify responses race each other.
+    chrome.storage.local.get(["freeornot_muted_v1"], (data) => {
+      const map = data.freeornot_muted_v1 || {};
+      const d = location.hostname.replace(/^www\./i, "").toLowerCase();
+      if (map[d]) return;
+
     const signature = `${verdict}|${result?.reason || ""}|${Number(result?.confidence || 0)}`;
     if (signature === lastBannerSignature && document.getElementById("pwd-banner")) {
       return;
@@ -475,32 +532,24 @@
         <span class="pwd-text">${cfg.message}</span>
         <span class="pwd-meta">${metaLine(result)}</span>
       </div>
-      <button class="pwd-report" id="pwd-report-btn" type="button">Report</button>
+      <button class="pwd-report" id="pwd-report-paid-btn" type="button">Report paid</button>
+      <button class="pwd-report pwd-free" id="pwd-report-free-btn" type="button">This is free</button>
+      <button class="pwd-mute" id="pwd-mute-btn" type="button">Don't show on this site</button>
       <button class="pwd-close" id="pwd-close-btn" type="button" aria-label="Close">✕</button>
     `;
     document.documentElement.appendChild(banner);
-    bannerShown = verdict !== "UNKNOWN";
+    bannerShown = true;
 
     document.getElementById("pwd-close-btn").addEventListener("click", () => {
       banner.remove();
     });
-    document.getElementById("pwd-report-btn").addEventListener("click", () => {
-      chrome.runtime.sendMessage({
-        type: "REPORT_SITE",
-        payload: {
-          domain: location.hostname,
-          url: location.href,
-          note: `User confirmed from banner (${verdict})`,
-          report_type: "paywall_before_export",
-          verdict_claimed: verdict,
-          reportedAt: Date.now()
-        }
-      });
-      const btn = document.getElementById("pwd-report-btn");
-      if (btn) {
-        btn.textContent = "Reported";
-        btn.disabled = true;
-      }
+    document.getElementById("pwd-mute-btn").addEventListener("click", muteThisSite);
+    document.getElementById("pwd-report-paid-btn").addEventListener("click", () => {
+      sendVote("paid", document.getElementById("pwd-report-paid-btn"));
+    });
+    document.getElementById("pwd-report-free-btn").addEventListener("click", () => {
+      sendVote("free", document.getElementById("pwd-report-free-btn"));
+    });
     });
   }
 
@@ -652,6 +701,10 @@
         const verdict = String(result.verdict || "UNKNOWN").toUpperCase();
         const conf = Number(result.confidence || 0);
 
+        if (result.analysis_status === "skipped") {
+          return;
+        }
+
         // Strong FREE → quiet. Weak FREE or tool-like page → re-analyze.
         if (verdict === "FREE") {
           if (conf >= 0.75 && !result.needs_classification && !looksToolish(collectSignals())) {
@@ -666,8 +719,9 @@
           return;
         }
 
-        // Not in cache → dynamic analysis (AI), then stored for everyone
-        requestClassify(true);
+        // Not in cache → dynamic analysis, then stored for everyone.
+        // Don't flash an analyzing banner on ordinary websites.
+        requestClassify(false);
       }
     );
   }
@@ -717,8 +771,8 @@
 
   chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     if (msg.type === "SITE_VERDICT" && msg.result) {
-      // No longer auto-displayed — content script stays silent unless the
-      // popup is actively asking for a classification (see below).
+      lastClassifyResult = msg.result;
+      showBanner(msg.result);
       return;
     }
 
@@ -733,22 +787,13 @@
     }
   });
 
-  // Auto-run on page load is intentionally disabled.
-  // Previously this called classifyCurrentSite() + armLateChangeWatcher()
-  // on every page, which is what injected the banner across every site.
-  // Now the content script does nothing until the popup messages it via
-  // CLASSIFY_FOR_POPUP, so the box only ever appears when you click the
-  // extension icon.
-  //
-  // If you ever want the old always-on banner behavior back, uncomment:
-  //
-  // function init() {
-  //   classifyCurrentSite();
-  //   armLateChangeWatcher();
-  // }
-  // if (document.readyState === "loading") {
-  //   document.addEventListener("DOMContentLoaded", init);
-  // } else {
-  //   init();
-  // }
+  function init() {
+    classifyCurrentSite();
+    armLateChangeWatcher();
+  }
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", init);
+  } else {
+    init();
+  }
 })();

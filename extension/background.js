@@ -2,8 +2,57 @@
 // cache hit → return | miss → analyze once → store for everyone
 // force=true → bypass cache shortcut and re-run AI (used for late paywall reveals)
 
-const API_BASE = "http://localhost:8787";
-const CACHE_KEY = "freeornot_cache_v4";
+const API_BASE = "https://paywall-detector.onrender.com"
+const CACHE_KEY = "freeornot_cache_v6";
+const INSTALL_ID_KEY = "freeornot_install_id";
+const MUTE_KEY = "freeornot_muted_v1";
+
+const KNOWN_PAID_DOMAINS = new Set([
+  "netflix.com",
+  "primevideo.com",
+  "amazonprimevideo.com",
+  "disneyplus.com",
+  "hulu.com",
+  "max.com",
+  "hbomax.com",
+  "play.max.com",
+  "paramountplus.com",
+  "peacocktv.com",
+  "tv.apple.com",
+  "hotstar.com",
+  "jiohotstar.com",
+  "sonyliv.com",
+  "zee5.com",
+  "jiocinema.com",
+  "discoveryplus.com",
+  "crunchyroll.com",
+  "dazn.com"
+]);
+
+const KNOWN_PAID_TOKENS = new Set([
+  "netflix",
+  "primevideo",
+  "disneyplus",
+  "hulu",
+  "hbomax",
+  "paramountplus",
+  "peacocktv",
+  "hotstar",
+  "jiohotstar",
+  "sonyliv",
+  "zee5",
+  "jiocinema",
+  "discoveryplus",
+  "crunchyroll"
+]);
+
+const AMAZON_PRIME_VIDEO_HINTS = [
+  "/gp/video",
+  "/primevideo",
+  "/prime-video",
+  "primevideo.",
+  "/minitv"
+];
 
 const TTL = {
   FREE: 1000 * 60 * 60 * 24 * 2, // strong FREE; weak uses shorter below
@@ -22,10 +71,44 @@ function normalizeDomain(domain) {
   return d.replace(/^www\./, "");
 }
 
+function isKnownPaidSubscription(domain, url) {
+  const d = normalizeDomain(domain);
+  if (!d) return false;
+  if (KNOWN_PAID_DOMAINS.has(d)) return true;
+  for (const parent of KNOWN_PAID_DOMAINS) {
+    if (d.endsWith(`.${parent}`)) return true;
+  }
+  const labels = new Set(d.split(".").filter(Boolean));
+  for (const token of KNOWN_PAID_TOKENS) {
+    if (labels.has(token)) return true;
+  }
+  const blob = `${d} ${String(url || "").toLowerCase()}`;
+  const isAmazon = labels.has("amazon") || d.startsWith("amzn.") || d.endsWith(".amzn.com");
+  if (isAmazon && AMAZON_PRIME_VIDEO_HINTS.some((hint) => blob.includes(hint))) return true;
+  return false;
+}
+
+function knownPaidResult(domain) {
+  return {
+    domain,
+    verdict: "PAID_REQUIRED",
+    confidence: 0.97,
+    reason: "This is a paid subscription product; access requires a membership.",
+    site_type: "streaming",
+    source: "known_paid",
+    community_reports: 0,
+    analysis_status: "ready",
+    last_verified_at: new Date().toISOString()
+  };
+}
+
 function ttlFor(result) {
   const verdict = String(result?.verdict || "UNKNOWN");
   const conf = Number(result?.confidence || 0);
-  if (verdict === "UNKNOWN") return TTL.UNKNOWN;
+  if (verdict === "UNKNOWN") {
+    if (result?.analysis_status === "skipped") return 1000 * 60 * 60 * 12;
+    return TTL.UNKNOWN;
+  }
   // Weak FREE expires fast so late-paywall sites get re-analyzed
   if (verdict === "FREE" && conf < 0.75) return 1000 * 60 * 60 * 6;
   return TTL[verdict] || TTL.UNKNOWN;
@@ -35,7 +118,9 @@ function isSolidVerdict(result) {
   if (!result) return false;
   if (result.needs_classification) return false;
   const verdict = String(result.verdict || "UNKNOWN");
-  if (!verdict || verdict === "UNKNOWN") return false;
+  if (!verdict || verdict === "UNKNOWN") {
+    return result.analysis_status === "skipped";
+  }
   if (verdict === "FREE" && Number(result.confidence || 0) < 0.7) return false;
   return true;
 }
@@ -56,14 +141,15 @@ async function getCache() {
 async function putCache(domain, result) {
   if (!domain || !result) return;
   // Don't cache UNKNOWN — keep domain open for retry
-  if (String(result.verdict || "") === "UNKNOWN") return;
+  if (String(result.verdict || "") === "UNKNOWN" && result.analysis_status !== "skipped") return;
   const cache = await getCache();
   cache[domain] = { fetchedAt: Date.now(), result };
   await storageSet({ [CACHE_KEY]: cache });
 }
 
-async function fetchBackend(domain) {
-  const res = await fetch(`${API_BASE}/v1/sites/${encodeURIComponent(domain)}`);
+async function fetchBackend(domain, url) {
+  const qs = url ? `?url=${encodeURIComponent(url)}` : "";
+  const res = await fetch(`${API_BASE}/v1/sites/${encodeURIComponent(domain)}${qs}`);
   if (!res.ok) throw new Error(`lookup ${res.status}`);
   return res.json();
 }
@@ -106,10 +192,16 @@ async function classifyUnknown(domain, url, signals, pageExcerpt, force) {
  * Lookup only — never calls AI.
  * Returns needs_classification: true when the knowledge base has no answer yet.
  */
-async function lookupSite(domain) {
+async function lookupSite(domain, url) {
   const normalized = normalizeDomain(domain);
   if (!normalized) {
     return { verdict: "UNKNOWN", confidence: 0, reason: "No domain.", domain: "" };
+  }
+
+  if (isKnownPaidSubscription(normalized, url)) {
+    const paid = knownPaidResult(normalized);
+    await putCache(normalized, paid);
+    return paid;
   }
 
   const cache = await getCache();
@@ -123,7 +215,7 @@ async function lookupSite(domain) {
   }
 
   try {
-    const remote = await fetchBackend(normalized);
+    const remote = await fetchBackend(normalized, url);
     if (remote.verdict && remote.verdict !== "UNKNOWN" && isSolidVerdict(remote)) {
       await putCache(normalized, remote);
     }
@@ -142,16 +234,44 @@ async function lookupSite(domain) {
   }
 }
 
+async function getMuted() {
+  const data = await storageGet([MUTE_KEY]);
+  return data[MUTE_KEY] || {};
+}
+
+async function setMuted(domain, muted) {
+  const map = await getMuted();
+  const key = normalizeDomain(domain);
+  if (muted) map[key] = true;
+  else delete map[key];
+  await storageSet({ [MUTE_KEY]: map });
+  return map;
+}
+
+async function getInstallId() {
+  const data = await storageGet([INSTALL_ID_KEY]);
+  if (data[INSTALL_ID_KEY]) return data[INSTALL_ID_KEY];
+  const id = crypto.randomUUID();
+  await storageSet({ [INSTALL_ID_KEY]: id });
+  return id;
+}
+
 async function reportSite(payload) {
+  const installId = await getInstallId();
   const res = await fetch(`${API_BASE}/v1/reports`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       ...payload,
-      domain: normalizeDomain(payload?.domain)
+      domain: normalizeDomain(payload?.domain),
+      install_id: installId
     })
   });
-  if (!res.ok) throw new Error(`report ${res.status}`);
+  if (!res.ok) {
+    const err = new Error(`report ${res.status}`);
+    err.status = res.status;
+    throw err;
+  }
   return res.json();
 }
 
@@ -183,7 +303,7 @@ chrome.webNavigation.onCommitted.addListener((details) => {
     return;
   }
   // Lookup only here — content script triggers classify if needed (has page text)
-  lookupSite(domain)
+  lookupSite(domain, details.url)
     .then((result) => {
       setTabResult(details.tabId, result);
       updateBadge(details.tabId, result);
@@ -202,7 +322,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   const tabId = sender.tab?.id ?? msg.tabId;
 
   if (msg.type === "CHECK_DOMAIN") {
-    lookupSite(msg.payload?.domain)
+    lookupSite(msg.payload?.domain, msg.payload?.url)
       .then((result) => {
         setTabResult(tabId, result);
         if (tabId != null) updateBadge(tabId, result);
@@ -214,10 +334,20 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
   if (msg.type === "CLASSIFY_UNKNOWN") {
     const domain = normalizeDomain(msg.payload?.domain);
+    const url = msg.payload?.url || "";
     const force = !!msg.payload?.force;
 
-    lookupSite(domain)
+    lookupSite(domain, url)
       .then(async (existing) => {
+        if (isKnownPaidSubscription(domain, url) || existing?.source === "known_paid") {
+          const paid = existing?.verdict === "PAID_REQUIRED" ? existing : knownPaidResult(domain);
+          await putCache(domain, paid);
+          setTabResult(tabId, paid);
+          if (tabId != null) updateBadge(tabId, paid);
+          sendResponse({ ok: true, result: paid, skipped_ai: true });
+          return;
+        }
+
         // Skip AI only if we already have a solid verdict AND this isn't a
         // forced re-check (forced = page revealed new payment signals).
         if (!force && isSolidVerdict(existing)) {
@@ -229,7 +359,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
         const result = await classifyUnknown(
           domain,
-          msg.payload?.url,
+          url,
           msg.payload?.signals,
           msg.payload?.pageExcerpt || msg.payload?.page_excerpt,
           force
@@ -252,6 +382,20 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
 
+  if (msg.type === "GET_MUTED") {
+    getMuted()
+      .then((muted) => sendResponse({ ok: true, muted }))
+      .catch((err) => sendResponse({ ok: false, error: String(err) }));
+    return true;
+  }
+
+  if (msg.type === "SET_MUTED") {
+    setMuted(msg.payload?.domain, !!msg.payload?.muted)
+      .then((muted) => sendResponse({ ok: true, muted }))
+      .catch((err) => sendResponse({ ok: false, error: String(err) }));
+    return true;
+  }
+
   if (msg.type === "GET_TAB_RESULT") {
     sendResponse({ ok: true, result: tabResults.get(msg.tabId ?? tabId) || null });
     return true;
@@ -261,19 +405,19 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     const domain = normalizeDomain(msg.payload?.domain);
     reportSite(msg.payload)
       .then(async (r) => {
-        const result =
-          r.result ||
-          {
-            domain,
-            verdict: "LIKELY_PAID",
-            confidence: 0.82,
-            reason: "Community report: payment required before download/export.",
-            source: "community",
-            last_verified_at: new Date().toISOString()
-          };
-        await putCache(domain, result);
+        const result = r.result || tabResults.get(tabId) || {
+          domain,
+          verdict: "UNKNOWN",
+          confidence: 0,
+          reason: r.message || "Report saved. Status changes after enough unique reports.",
+          source: "community",
+          last_verified_at: new Date().toISOString()
+        };
+        if (r.status_updated && result) {
+          await putCache(domain, result);
+        }
         setTabResult(tabId, result);
-        if (tabId != null) {
+        if (tabId != null && r.status_updated) {
           updateBadge(tabId, result);
           chrome.tabs.sendMessage(
             tabId,
@@ -284,16 +428,18 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         sendResponse({ ok: true, result, ...r });
       })
       .catch(async (err) => {
-        const fallback = {
-          domain,
-          verdict: "LIKELY_PAID",
-          confidence: 0.8,
-          reason: "Local report saved — server unreachable.",
-          source: "local_report",
-          last_verified_at: new Date().toISOString()
-        };
-        await putCache(domain, fallback);
-        sendResponse({ ok: true, result: fallback, offline: true, error: String(err) });
+        if (err?.status === 429) {
+          sendResponse({
+            ok: false,
+            rate_limited: true,
+            error: "Too many reports from this network. Try again later."
+          });
+          return;
+        }
+        sendResponse({
+          ok: false,
+          error: err?.message || "Could not save report. Is the server running?"
+        });
       });
     return true;
   }

@@ -23,6 +23,7 @@ Seed file is optional bootstrap only — not the product.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -34,6 +35,8 @@ from pathlib import Path
 import requests
 from flask import Flask, jsonify, request
 from flask_cors import CORS
+
+import store
 
 # Load server/.env if present (GEMINI_API_KEY)
 try:
@@ -76,12 +79,18 @@ GEMINI_FALLBACK_MODELS = [
 ZERO_SHOT_THRESHOLD = float(os.environ.get("ZERO_SHOT_CONFIDENCE_THRESHOLD", "0.65"))
 
 BASE_DIR = Path(__file__).parent
-REPORTS_FILE = BASE_DIR / "reports.json"
 SEED_FILE = BASE_DIR / "seed_sites.json"  # optional bootstrap only
-CLASSIFIED_FILE = BASE_DIR / "classified_sites.json"
 
-COMMUNITY_LIKELY = 1  # first report already teaches the network
-COMMUNITY_PAID = 3
+# Unique reporters required before community votes can change a site's status.
+COMMUNITY_LIKELY = 3
+COMMUNITY_PAID = 5
+COMMUNITY_FREE = 3
+VOTE_TTL_SECONDS = 60 * 60 * 24 * 30
+RATE_LIMIT_WINDOW = 60 * 60
+RATE_LIMIT_MAX = 10  # report submissions per IP per hour
+RATE_LIMIT_INSTALL_MAX = 8  # reports per extension install per hour
+CLASSIFY_RATE_MAX = 40  # classify posts per IP per hour
+INSTALL_ID_RE = re.compile(r"^[A-Za-z0-9_-]{8,128}$")
 
 # Per-verdict freshness. Weak FREE expires fast so late-paywall sites can be rechecked.
 TTL_SECONDS = {
@@ -93,6 +102,71 @@ TTL_SECONDS = {
 }
 
 VERDICTS = {"FREE", "LIMITED_FREE", "LIKELY_PAID", "PAID_REQUIRED", "UNKNOWN"}
+SITE_TYPES = {"tool", "streaming", "news", "chat", "marketplace", "other"}
+
+# Streaming / membership products whose core use is paid. Matched as an exact
+# host or a parent suffix (www.netflix.com, netflix.co.in via token rules).
+KNOWN_PAID_DOMAINS = {
+    "netflix.com",
+    "primevideo.com",
+    "amazonprimevideo.com",
+    "disneyplus.com",
+    "hulu.com",
+    "max.com",
+    "hbomax.com",
+    "play.max.com",
+    "paramountplus.com",
+    "peacocktv.com",
+    "tv.apple.com",
+    "hotstar.com",
+    "jiohotstar.com",
+    "sonyliv.com",
+    "zee5.com",
+    "jiocinema.com",
+    "discoveryplus.com",
+    "crunchyroll.com",
+    "dazn.com",
+}
+
+KNOWN_PAID_HOST_TOKENS = {
+    "netflix",
+    "primevideo",
+    "disneyplus",
+    "hulu",
+    "hbomax",
+    "paramountplus",
+    "peacocktv",
+    "hotstar",
+    "jiohotstar",
+    "sonyliv",
+    "zee5",
+    "jiocinema",
+    "discoveryplus",
+    "crunchyroll",
+}
+
+AMAZON_PRIME_VIDEO_URL_HINTS = (
+    "/gp/video",
+    "/primevideo",
+    "/prime-video",
+    "primevideo.",
+    "/minitv",
+)
+
+ZS_SUBSCRIPTION_PRODUCT = {
+    "subscribe to watch": 0.45,
+    "start your membership": 0.40,
+    "start membership": 0.40,
+    "join prime": 0.40,
+    "prime membership": 0.35,
+    "watch with a subscription": 0.40,
+    "subscription required": 0.40,
+    "start your free trial": 0.25,
+    "monthly subscription": 0.30,
+    "annual subscription": 0.30,
+    "streaming plan": 0.30,
+    "sign up to watch": 0.35,
+}
 
 # One AI job per domain at a time
 _classify_locks: dict[str, threading.Lock] = {}
@@ -106,8 +180,9 @@ Will this user likely need to PAY (subscription, one-time fee, unlock) before th
 download, export, remove a watermark, submit/complete an application, or unlock the
 finished result of work/effort they put into this site?
 
-Focus on the FINAL ACTION (download/export/submit/apply), NOT whether the company sells
-a Pro plan somewhere on the site.
+Focus on the FINAL ACTION the user came for: download/export/submit/apply, OR
+accessing a paid product whose core use requires a subscription (streaming,
+membership video, paid newsstand apps).
 
 Examples of YES / risk:
 - Resume builders that let you edit then block PDF download
@@ -117,13 +192,16 @@ Examples of YES / risk:
 - Freemium design tools where free export is heavily limited
 - Job/application platforms that let you build a full profile, then charge to
   submit, "boost", or unlock applications to employers
+- Streaming / membership products where watching or listening requires paying
+  (Netflix, Prime Video, Disney+, Max, Hulu, Hotstar, etc.)
 
 Examples of NO / free for this purpose:
 - ChatGPT / Claude / Gemini — Upgrade CTAs exist but chat text is copyable free
 - Google Docs — export free with login
-- News / social / blogs with no create-and-download product
+- News / social / blogs with no paywall and no create-and-download product
 - Tools where the main output is freely downloadable
 - Job platforms where applying and submitting is free (optional paid boosts don't count)
+- Amazon retail shopping (browse/buy items) — that is not Prime Video
 
 Verdicts:
 - FREE — core download/export/submission usable without paying
@@ -135,6 +213,7 @@ Verdicts:
 Respond ONLY with strict JSON (no markdown):
 {"verdict":"FREE"|"LIMITED_FREE"|"LIKELY_PAID"|"PAID_REQUIRED"|"UNKNOWN",
  "confidence":0.0-1.0,
+ "site_type":"tool"|"streaming"|"news"|"chat"|"marketplace"|"other",
  "reason":"one short sentence",
  "features":{"limited_free_export":bool,"adds_watermark":bool,
  "locks_high_res":bool,"requires_payment_before_download":bool,
@@ -154,6 +233,47 @@ def normalize_domain(domain: str) -> str:
     return d
 
 
+def _host_labels(domain: str) -> set[str]:
+    return {p for p in normalize_domain(domain).split(".") if p}
+
+
+def is_amazon_retail(domain: str) -> bool:
+    labels = _host_labels(domain)
+    return "amazon" in labels or domain.startswith("amzn.") or domain.endswith(".amzn.com")
+
+
+def is_known_paid_subscription(domain: str, url: str = "") -> bool:
+    """True for products whose main use is a paid membership (Netflix, Prime Video)."""
+    domain = normalize_domain(domain)
+    if not domain:
+        return False
+    if domain in KNOWN_PAID_DOMAINS or any(
+        domain.endswith("." + parent) for parent in KNOWN_PAID_DOMAINS
+    ):
+        return True
+    labels = _host_labels(domain)
+    if labels & KNOWN_PAID_HOST_TOKENS:
+        return True
+    blob = f"{domain} {(url or '').lower()}"
+    if is_amazon_retail(domain) and any(hint in blob for hint in AMAZON_PRIME_VIDEO_URL_HINTS):
+        return True
+    return False
+
+
+def known_paid_payload(domain: str) -> dict:
+    return {
+        "verdict": "PAID_REQUIRED",
+        "confidence": 0.97,
+        "site_type": "streaming",
+        "reason": "This is a paid subscription product; access requires a membership.",
+        "last_verified_at": now_iso(),
+        "features": {
+            "requires_payment_before_download": True,
+            "requires_subscription_for_access": True,
+        },
+    }
+
+
 def load_json(path: Path, default):
     if not path.exists():
         return default
@@ -167,8 +287,85 @@ def save_json(path: Path, data) -> None:
     path.write_text(json.dumps(data, indent=2), encoding="utf-8")
 
 
-def load_reports():
-    return load_json(REPORTS_FILE, [])
+def client_ip() -> str:
+    forwarded = (request.headers.get("X-Forwarded-For") or "").split(",")[0].strip()
+    return forwarded or (request.remote_addr or "unknown")
+
+
+def hash_secret(value: str) -> str:
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def reporter_fingerprint(ip: str, install_id: str) -> str:
+    """Stable identity for one reporter. Same extension install counts once
+    even if the IP changes; IP is only used when install_id is missing."""
+    if install_id:
+        return hash_secret(f"install|{install_id}")
+    return hash_secret(f"ip|{ip}")
+
+
+def reporter_aliases(ip: str, install_id: str) -> set[str]:
+    """Current + legacy fingerprints so a user cannot vote twice after a format change."""
+    aliases = {reporter_fingerprint(ip, install_id)}
+    aliases.add(hash_secret(f"{ip}|{install_id}"))
+    return aliases
+
+
+def normalize_install_id(raw) -> str:
+    value = str(raw or "").strip()
+    if INSTALL_ID_RE.match(value):
+        return value
+    return ""
+
+
+def normalize_stance(body: dict) -> str:
+    raw = str(body.get("stance") or body.get("report_type") or "").strip().lower()
+    if raw in {"free", "false_positive", "now_free", "not_paywall", "this_is_free"}:
+        return "free"
+    return "paid"
+
+
+def vote_tally(domain: str) -> dict:
+    return store.vote_counts(normalize_domain(domain), time.time(), VOTE_TTL_SECONDS)
+
+
+def community_confidence(unique_count: int) -> float:
+    if unique_count >= 8:
+        return 0.90
+    if unique_count >= 5:
+        return 0.85
+    if unique_count >= 3:
+        return 0.75
+    if unique_count >= 1:
+        return 0.65
+    return 0.0
+
+
+def record_report_attempt(ip: str, install_id: str) -> tuple[bool, int]:
+    now = time.time()
+    allowed_ip, remaining_ip = store.record_rate(
+        f"ip:{hash_secret(ip)}", now, RATE_LIMIT_WINDOW, RATE_LIMIT_MAX
+    )
+    if not allowed_ip:
+        return False, 0
+    if install_id:
+        allowed_install, remaining_install = store.record_rate(
+            f"install:{hash_secret(install_id)}",
+            now,
+            RATE_LIMIT_WINDOW,
+            RATE_LIMIT_INSTALL_MAX,
+        )
+        if not allowed_install:
+            return False, 0
+        return True, min(remaining_ip, remaining_install)
+    return True, remaining_ip
+
+
+def record_classify_attempt(ip: str) -> bool:
+    allowed, _ = store.record_rate(
+        f"classify:{hash_secret(ip)}", time.time(), RATE_LIMIT_WINDOW, CLASSIFY_RATE_MAX
+    )
+    return allowed
 
 
 def load_seed():
@@ -176,21 +373,25 @@ def load_seed():
 
 
 def load_classified():
-    return load_json(CLASSIFIED_FILE, {})
-
-
-def save_classified(data) -> None:
-    save_json(CLASSIFIED_FILE, data)
+    return store.load_classified()
 
 
 def report_count_for(domain: str) -> int:
-    return sum(1 for r in load_reports() if normalize_domain(r.get("domain")) == domain)
+    return vote_tally(domain)["paid"]
+
+
+def normalize_site_type(value) -> str:
+    raw = str(value or "").strip().lower()
+    return raw if raw in SITE_TYPES else "other"
 
 
 def enrich(result: dict, domain: str, source: str) -> dict:
     out = dict(result)
     out["domain"] = domain
-    out["community_reports"] = report_count_for(domain)
+    tally = vote_tally(domain) if domain else {"paid": 0, "free": 0, "net_paid": 0, "total": 0}
+    out["community_reports"] = tally["paid"]
+    out["community_paid"] = tally["paid"]
+    out["community_free"] = tally["free"]
     out["source"] = source
     out.setdefault("confidence", 0.0)
     out.setdefault("reason", "")
@@ -198,10 +399,12 @@ def enrich(result: dict, domain: str, source: str) -> dict:
     out.setdefault("last_verified_at", now_iso())
     out.setdefault("version", 1)
     out.setdefault("analysis_status", "ready")
+    out["site_type"] = normalize_site_type(out.get("site_type"))
     verdict = str(out.get("verdict", "UNKNOWN")).upper().replace(" ", "_")
     if verdict not in VERDICTS:
         verdict = "UNKNOWN"
     out["verdict"] = verdict
+    out.pop("skip_ai", None)
     return out
 
 
@@ -212,32 +415,39 @@ def domain_lock(domain: str) -> threading.Lock:
         return _classify_locks[domain]
 
 
+def community_payload(domain: str, tally: dict) -> dict:
+    net = int(tally.get("net_paid") or 0)
+    paid = int(tally.get("paid") or 0)
+    free = int(tally.get("free") or 0)
+    if net <= -COMMUNITY_FREE:
+        noun = "reporter" if free == 1 else "reporters"
+        return {
+            "verdict": "FREE",
+            "confidence": community_confidence(free),
+            "site_type": "other",
+            "reason": f"{free} unique community {noun}: this site does not require payment for the core task.",
+            "last_verified_at": now_iso(),
+            "features": {},
+        }
+    verdict = "PAID_REQUIRED" if net >= COMMUNITY_PAID else "LIKELY_PAID"
+    noun = "reporter" if paid == 1 else "reporters"
+    return {
+        "verdict": verdict,
+        "confidence": community_confidence(paid),
+        "site_type": "other",
+        "reason": f"{paid} unique community {noun}: payment required before download/export/access.",
+        "last_verified_at": now_iso(),
+        "features": {"requires_payment_before_download": True},
+    }
+
+
 def community_verdict(domain: str):
-    count = report_count_for(domain)
-    if count >= COMMUNITY_PAID:
-        return enrich(
-            {
-                "verdict": "PAID_REQUIRED",
-                "confidence": min(0.80 + count * 0.02, 0.95),
-                "reason": f"{count} community reports: payment required before download/export.",
-                "last_verified_at": now_iso(),
-                "features": {"requires_payment_before_download": True},
-            },
-            domain,
-            "community",
-        )
-    if count >= COMMUNITY_LIKELY:
-        return enrich(
-            {
-                "verdict": "LIKELY_PAID",
-                "confidence": 0.75,
-                "reason": "Community report suggests paid gating on download/export.",
-                "last_verified_at": now_iso(),
-                "features": {"requires_payment_before_download": True},
-            },
-            domain,
-            "community",
-        )
+    tally = vote_tally(domain)
+    net = int(tally.get("net_paid") or 0)
+    if net >= COMMUNITY_PAID or net >= COMMUNITY_LIKELY:
+        return enrich(community_payload(domain, tally), domain, "community")
+    if net <= -COMMUNITY_FREE:
+        return enrich(community_payload(domain, tally), domain, "community")
     return None
 
 
@@ -245,6 +455,8 @@ def cache_ttl_seconds(result: dict) -> int:
     """How long a stored classification stays fresh."""
     verdict = str(result.get("verdict", "UNKNOWN")).upper().replace(" ", "_")
     if verdict == "UNKNOWN":
+        if str(result.get("analysis_status") or "") == "skipped":
+            return 60 * 60 * 12
         return 0
     conf = float(result.get("confidence") or 0)
     # Any low-confidence guess (e.g. zero-shot fallback used because AI was
@@ -274,14 +486,14 @@ def is_solid_verdict(existing: dict) -> bool:
         return False
     verdict = str(existing.get("verdict", "UNKNOWN")).upper().replace(" ", "_")
     if verdict == "UNKNOWN":
-        return False
+        return str(existing.get("analysis_status") or "") == "skipped"
     # Low-confidence FREE is not solid — often a homepage misread
     if verdict == "FREE" and float(existing.get("confidence") or 0) < 0.7:
         return False
     return True
 
 
-def lookup_site(domain: str) -> dict:
+def lookup_site(domain: str, url: str = "") -> dict:
     """Read-only knowledge lookup. Never calls AI."""
     domain = normalize_domain(domain)
     if not domain:
@@ -291,18 +503,24 @@ def lookup_site(domain: str) -> dict:
             "none",
         )
 
-    # 1) Dynamic cache — results from prior AI / reports (primary knowledge)
-    classified = load_classified()
-    entry = classified.get(domain)
-    if entry and is_fresh_entry(entry):
-        return enrich(entry["result"], domain, entry.get("source", "cache"))
+    if is_known_paid_subscription(domain, url):
+        return enrich(known_paid_payload(domain), domain, "known_paid")
 
-    # 2) Community quorum
+    # 1) Dynamic cache — results from prior AI / reports (primary knowledge)
+    entry = store.get_classified(domain)
     community = community_verdict(domain)
+
     if community:
         return community
 
-    # 3) Optional bootstrap seed (not required for the product to work)
+    if entry and is_fresh_entry(entry):
+        # Drop old community verdicts that never reached the current quorum.
+        if entry.get("source") == "community" and not community:
+            pass
+        else:
+            return enrich(entry["result"], domain, entry.get("source", "cache"))
+
+    # 2) Optional bootstrap seed (not required for the product to work)
     seed = load_seed()
     if domain in seed:
         return enrich(seed[domain], domain, "seed")
@@ -320,13 +538,19 @@ def lookup_site(domain: str) -> dict:
     )
 
 
+def scrub_excerpt(text: str) -> str:
+    cleaned = re.sub(r"[\w.+-]+@[\w-]+\.[\w.-]+", "[email]", text or "")
+    cleaned = re.sub(r"\b\d{12,19}\b", "[number]", cleaned)
+    return cleaned[:2200]
+
+
 def build_user_prompt(domain, url, signals, page_excerpt):
-    excerpt = (page_excerpt or "")[:2200]
+    excerpt = scrub_excerpt((page_excerpt or "")[:2200])
     return (
         f"Domain: {domain}\n"
         f"URL: {url or 'unknown'}\n"
         f"Page signals: {json.dumps(signals or {}, ensure_ascii=False)}\n"
-        f"Visible page text:\n\"\"\"{excerpt}\"\"\"\n\n"
+        f"Visible page text:\n\"\"\"{scrub_excerpt(excerpt)}\"\"\"\n\n"
         "Classify payment risk for completing/downloading/exporting/submitting "
         "what the user came to this site to do."
     )
@@ -350,6 +574,7 @@ def parse_model_json(raw_text: str) -> dict:
     return {
         "verdict": verdict,
         "confidence": float(data.get("confidence", 0.4)),
+        "site_type": normalize_site_type(data.get("site_type")),
         "reason": data.get("reason") or "",
         "features": data.get("features") or {},
         "last_verified_at": now_iso(),
@@ -511,37 +736,52 @@ def _score_phrases(text: str, weighted: dict[str, float]) -> tuple[float, list[s
     return sum(weighted[phrase] for phrase in hits), hits
 
 
-def zero_shot_classify(signals: dict, page_excerpt: str) -> dict:
+def zero_shot_classify(signals: dict, page_excerpt: str, domain: str = "", url: str = "") -> dict:
     """Weighted keyword/signal scorer — the "zero-shot" first pass.
 
     Runs on every unknown/stale domain before AI. It always returns a
     verdict + confidence (never None); the caller decides whether that
     confidence is high enough to skip AI entirely (see ZERO_SHOT_THRESHOLD).
     """
-    text = f"{json.dumps(signals)} {(page_excerpt or '')}".lower()
+    if is_known_paid_subscription(domain, url):
+        return known_paid_payload(domain)
+
+    text = f"{json.dumps(signals)} {(page_excerpt or '')} {(url or '')}".lower()
     toolish = any(k in text for k in ZS_TOOLISH_KEYWORDS) or bool(
         (signals or {}).get("exportish_buttons")
         or (signals or {}).get("has_file_upload")
         or (signals or {}).get("matched_tool_keywords")
     )
 
+    sub_signal, sub_hits = _score_phrases(text, ZS_SUBSCRIPTION_PRODUCT)
+
     if not toolish:
-        # Anti-FP rule: chat/content/blog pages with no create-and-download
-        # flow default FREE with solid (not certain) confidence.
+        if sub_signal >= 0.35:
+            return {
+                "verdict": "PAID_REQUIRED",
+                "confidence": min(0.92, 0.74 + sub_signal * 0.2),
+                "site_type": "streaming",
+                "reason": f"Membership/subscription required to use this product ({sub_hits[0]}).",
+                "features": {"requires_subscription_for_access": True},
+                "last_verified_at": now_iso(),
+            }
         return {
-            "verdict": "FREE",
-            "confidence": 0.72,
-            "reason": "Page does not look like a create-and-download or apply-and-pay flow.",
+            "verdict": "UNKNOWN",
+            "confidence": 0.35,
+            "site_type": "other",
+            "reason": "Not enough evidence that this site gates a finished result behind payment.",
             "features": {},
             "last_verified_at": now_iso(),
+            "skip_ai": True,
+            "needs_classification": False,
         }
 
     strong_paid, strong_hits = _score_phrases(text, ZS_STRONG_PAYMENT)
     weak_paid, weak_hits = _score_phrases(text, ZS_WEAK_PAYMENT)
     free_signal, free_hits = _score_phrases(text, ZS_STRONG_FREE)
 
-    raw = max(0.0, min(1.0, strong_paid + weak_paid * 0.6 - free_signal))
-    evidence_count = len(strong_hits) + len(weak_hits) + len(free_hits)
+    raw = max(0.0, min(1.0, strong_paid + weak_paid * 0.6 + sub_signal - free_signal))
+    evidence_count = len(strong_hits) + len(weak_hits) + len(free_hits) + len(sub_hits)
 
     if raw >= 0.70:
         verdict, base_confidence = "PAID_REQUIRED", 0.72
@@ -550,14 +790,19 @@ def zero_shot_classify(signals: dict, page_excerpt: str) -> dict:
     elif raw >= 0.25:
         verdict, base_confidence = "LIMITED_FREE", 0.50
     else:
-        verdict, base_confidence = "FREE", 0.55
+        verdict, base_confidence = "UNKNOWN", 0.45
 
     confidence = min(0.93, base_confidence + evidence_count * 0.05)
+    site_type = "streaming" if sub_hits and not strong_hits else "tool"
 
-    if strong_hits:
+    if sub_hits and not strong_hits:
+        reason = f"Membership/subscription required to use this product ({sub_hits[0]})."
+    elif strong_hits:
         reason = f"Payment phrase found before task completion ({strong_hits[0]})."
     elif free_hits:
         reason = f"Free-usage language found, tool-like page ({free_hits[0]})."
+        verdict = "LIMITED_FREE" if verdict == "UNKNOWN" else verdict
+        site_type = "tool"
     elif weak_hits:
         reason = "Tool-like page with generic upgrade language, no direct payment gate found."
     else:
@@ -566,8 +811,9 @@ def zero_shot_classify(signals: dict, page_excerpt: str) -> dict:
     return {
         "verdict": verdict,
         "confidence": confidence,
+        "site_type": site_type,
         "reason": reason,
-        "features": {"requires_payment_before_download": bool(strong_hits)},
+        "features": {"requires_payment_before_download": bool(strong_hits or sub_hits)},
         "last_verified_at": now_iso(),
     }
 
@@ -575,18 +821,18 @@ def zero_shot_classify(signals: dict, page_excerpt: str) -> dict:
 def persist_classification(domain: str, result: dict, source: str) -> dict:
     enriched = enrich(result, domain, source)
     # Do not pollute the knowledge base with UNKNOWN — leave domain open for retry
-    if enriched.get("verdict") == "UNKNOWN":
+    if enriched.get("verdict") == "UNKNOWN" and enriched.get("analysis_status") != "skipped":
         enriched["needs_classification"] = True
         enriched["analysis_status"] = enriched.get("analysis_status") or "failed"
         return enriched
 
-    classified = load_classified()
-    classified[domain] = {
-        "classified_at": time.time(),
-        "source": source,
-        "result": enriched,
-    }
-    save_classified(classified)
+    # Never let a later FREE guess overwrite a known paid subscription product.
+    if is_known_paid_subscription(domain) and source != "known_paid":
+        paid = enrich(known_paid_payload(domain), domain, "known_paid")
+        store.upsert_classified(domain, "known_paid", paid)
+        return paid
+
+    store.upsert_classified(domain, source, enriched)
     return enriched
 
 
@@ -597,7 +843,7 @@ def health():
             "ok": True,
             "ai_enabled": bool(GEMINI_API_KEY),
             "gemini_model": GEMINI_MODEL,
-            "classified_domains": len(load_classified()),
+            "classified_domains": store.classified_count(),
             "seed_domains": len(load_seed()),
         }
     )
@@ -605,7 +851,8 @@ def health():
 
 @app.get("/v1/sites/<domain>")
 def get_site(domain):
-    return jsonify(lookup_site(domain))
+    url = request.args.get("url") or ""
+    return jsonify(lookup_site(domain, url))
 
 
 @app.post("/v1/sites/classify")
@@ -622,22 +869,34 @@ def classify_site():
         return jsonify({"error": "domain is required"}), 400
 
     force = bool(body.get("force"))
+    url = body.get("url") or ""
 
     with domain_lock(domain):
-        existing = lookup_site(domain)
+        if is_known_paid_subscription(domain, url):
+            return jsonify(persist_classification(domain, known_paid_payload(domain), "known_paid"))
+
+        existing = lookup_site(domain, url)
         if not force and is_solid_verdict(existing):
             return jsonify(existing)
 
+        if not record_classify_attempt(client_ip()):
+            if is_solid_verdict(existing):
+                return jsonify(existing)
+            return jsonify({"error": "rate_limited", "message": "Too many classification requests."}), 429
+
         page_excerpt = body.get("page_excerpt") or body.get("pageExcerpt") or ""
         signals = body.get("signals") or {}
-        url = body.get("url")
 
         if not page_excerpt and not signals:
             return jsonify({"error": "page_excerpt or signals required"}), 400
 
         # Zero-shot first: cheap, instant, no API cost. Only escalate to AI
         # when it isn't confident enough to trust on its own.
-        zero_shot = zero_shot_classify(signals, page_excerpt)
+        zero_shot = zero_shot_classify(signals, page_excerpt, domain, url)
+        if zero_shot.get("skip_ai"):
+            zero_shot["analysis_status"] = "skipped"
+            zero_shot["needs_classification"] = False
+            return jsonify(persist_classification(domain, zero_shot, "zero_shot"))
         if zero_shot["confidence"] >= ZERO_SHOT_THRESHOLD:
             source = "zero_shot_force" if force else "zero_shot"
             return jsonify(persist_classification(domain, zero_shot, source))
@@ -662,7 +921,17 @@ def classify_legacy():
     body = request.get_json(silent=True) or {}
     domain = normalize_domain(body.get("domain"))
     force = bool(body.get("force"))
-    existing = lookup_site(domain)
+    url = body.get("url") or ""
+    if is_known_paid_subscription(domain, url):
+        result = persist_classification(domain, known_paid_payload(domain), "known_paid")
+        return jsonify(
+            {
+                "verdict": "paywall",
+                "confidence": result.get("confidence", 0),
+                "reason": result.get("reason", ""),
+            }
+        )
+    existing = lookup_site(domain, url)
     if not force and is_solid_verdict(existing):
         legacy_map = {
             "PAID_REQUIRED": "paywall",
@@ -685,7 +954,7 @@ def classify_legacy():
 
     with domain_lock(domain):
         signals = {"buttonLabel": body.get("buttonLabel")}
-        zero_shot = zero_shot_classify(signals, page_excerpt)
+        zero_shot = zero_shot_classify(signals, page_excerpt, domain, url)
         if zero_shot["confidence"] >= ZERO_SHOT_THRESHOLD:
             result = persist_classification(domain, zero_shot, "zero_shot_force" if force else "zero_shot")
         elif GEMINI_API_KEY:
@@ -723,44 +992,116 @@ def report():
     if not domain:
         return jsonify({"error": "domain is required"}), 400
 
-    reports = load_reports()
-    reports.append(
-        {
-            "domain": domain,
-            "url": body.get("url"),
-            "note": body.get("note"),
-            "report_type": body.get("report_type") or "paywall_before_export",
-            "verdict_claimed": body.get("verdict_claimed"),
-            "reportedAt": body.get("reportedAt", int(time.time() * 1000)),
-            "install_id": body.get("install_id"),
-        }
-    )
-    save_json(REPORTS_FILE, reports)
-    total = report_count_for(domain)
+    ip = client_ip()
+    install_id = normalize_install_id(body.get("install_id"))
+    if not install_id:
+        return jsonify({
+            "error": "install_id_required",
+            "message": "A valid install_id is required to report a site.",
+        }), 400
 
-    # Reports write into the shared knowledge base immediately
-    verdict = "PAID_REQUIRED" if total >= COMMUNITY_PAID else "LIKELY_PAID"
-    result = persist_classification(
-        domain,
-        {
-            "verdict": verdict,
-            "confidence": 0.82 if verdict == "LIKELY_PAID" else 0.92,
-            "reason": "Community report: payment required before download/export/submission.",
-            "last_verified_at": now_iso(),
-            "features": {"requires_payment_before_download": True},
-        },
-        "community",
+    stance = normalize_stance(body)
+    report_type = body.get("report_type") or (
+        "false_positive" if stance == "free" else "paywall_before_export"
     )
-    return jsonify({"ok": True, "totalReportsForDomain": total, "domain": domain, "result": result})
+    fingerprint = reporter_fingerprint(ip, install_id)
+    now = time.time()
+    url = body.get("url") or ""
+
+    existing = store.find_report(domain, reporter_aliases(ip, install_id), now, VOTE_TTL_SECONDS)
+    if existing and existing.get("stance") == stance:
+        tally = vote_tally(domain)
+        current = lookup_site(domain, url)
+        return jsonify({
+            "ok": True,
+            "already_reported": True,
+            "status_updated": False,
+            "stance": stance,
+            "totalReportsForDomain": tally["paid"],
+            "uniqueReporters": tally["paid"],
+            "community_paid": tally["paid"],
+            "community_free": tally["free"],
+            "reports_needed": COMMUNITY_LIKELY,
+            "refreshed": True,
+            "domain": domain,
+            "result": current,
+            "message": "You have already submitted this report for this site.",
+        })
+
+    allowed, remaining = record_report_attempt(ip, install_id)
+    if not allowed:
+        return jsonify({
+            "error": "rate_limited",
+            "message": "Too many reports from this install or network. Try again later.",
+        }), 429
+
+    store.upsert_report(
+        domain,
+        fingerprint,
+        stance,
+        report_type,
+        url,
+        body.get("note"),
+        now,
+    )
+    tally = vote_tally(domain)
+    community = community_verdict(domain)
+    status_updated = community is not None
+    if status_updated:
+        result = persist_classification(domain, community_payload(domain, tally), "community")
+    else:
+        result = lookup_site(domain, url)
+
+    needed = COMMUNITY_FREE if stance == "free" else COMMUNITY_LIKELY
+    have = tally["free"] if stance == "free" else tally["paid"]
+    return jsonify({
+        "ok": True,
+        "already_reported": False,
+        "status_updated": status_updated,
+        "stance": stance,
+        "totalReportsForDomain": tally["paid"],
+        "uniqueReporters": tally["paid"],
+        "community_paid": tally["paid"],
+        "community_free": tally["free"],
+        "reports_needed": needed,
+        "refreshed": bool(existing),
+        "rateLimitRemaining": remaining,
+        "domain": domain,
+        "result": result,
+        "message": (
+            f"{have} unique {stance} reports so far. Status changes after {needed}."
+            if not status_updated
+            else f"Community status updated from {tally['paid']} paid / {tally['free']} free reports."
+        ),
+    })
 
 
 @app.get("/v1/reports/<domain>")
 @app.get("/reports/<domain>")
 def get_reports(domain):
     domain = normalize_domain(domain)
-    reports = [r for r in load_reports() if normalize_domain(r.get("domain")) == domain]
-    return jsonify({"domain": domain, "count": len(reports), "reports": reports})
+    tally = vote_tally(domain)
+    now = time.time()
+    rows = [
+        {
+            "domain": r.get("domain"),
+            "stance": r.get("stance"),
+            "report_type": r.get("report_type"),
+            "last_reported_at": r.get("last_reported_at"),
+        }
+        for r in store.load_fresh_reports(now, VOTE_TTL_SECONDS)
+        if normalize_domain(r.get("domain")) == domain
+    ]
+    return jsonify({
+        "domain": domain,
+        "count": tally["paid"],
+        "community_paid": tally["paid"],
+        "community_free": tally["free"],
+        "reports": rows,
+    })
 
+
+store.init_db()
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=PORT)

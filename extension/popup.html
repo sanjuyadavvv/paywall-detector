@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <style>
     body {
-      width: 320px;
+      width: 340px;
       margin: 0;
       padding: 16px;
       font-family: "Segoe UI", system-ui, sans-serif;
@@ -78,8 +78,11 @@
     <div class="reason" id="reason">Looking up this domain in the knowledge base.</div>
     <div class="meta" id="meta"></div>
   </div>
-  <button id="report-btn">Report paywall on this site</button>
-  <p class="hint">Warns early if download/export is likely to require payment — not a keyword scanner.</p>
+  <div class="actions">
+    <button id="report-paid-btn">Report this site as paid</button>
+    <button id="report-free-btn" class="secondary">This site is actually free</button>
+  </div>
+  <p class="hint">A site’s status only changes after enough unique reports. One person can vote once (paid or free).</p>
   <script src="popup.js"></script>
 </body>
 </html>

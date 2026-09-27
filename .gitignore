@@ -61,6 +61,7 @@ build/
 node_modules/
 
 
-classified_sites.json
-reports.json
+*.db
+*.db-wal
+*.db-shm
 

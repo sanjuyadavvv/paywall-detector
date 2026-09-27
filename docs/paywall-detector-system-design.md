@@ -1,6 +1,6 @@
 # FreeOrNot — Production System Design
 
-> Working name: **FreeOrNot** (formerly Paywall Detector)
+> Working name: **Paywall detector** 
 > Classification engine for creative/productivity sites that gate download, export, or watermark removal behind payment.
 
 ---

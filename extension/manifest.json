@@ -1,10 +1,10 @@
 {
   "manifest_version": 3,
   "name": "FreeOrNot — Paywall Detector",
-  "version": "2.0.1",
+  "version": "2.1.0",
   "description": "Warns you within seconds if a site is likely to charge before you can download or export your work.",
   "permissions": ["storage", "webNavigation", "activeTab"],
-  "host_permissions": ["<all_urls>", "http://localhost:8787/*"],
+  "host_permissions": ["<all_urls>", "https://paywall-detector.onrender.com/*"],
   "background": {
     "service_worker": "background.js"
   },

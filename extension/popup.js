@@ -6,6 +6,15 @@ const LABELS = {
   UNKNOWN: "Unknown"
 };
 
+const SITE_TYPE_LABELS = {
+  tool: "Creative / download tool",
+  streaming: "Paid streaming / membership",
+  news: "News / articles",
+  chat: "Chat / AI assistant",
+  marketplace: "Store / marketplace",
+  other: "Other"
+};
+
 function daysAgo(iso) {
   if (!iso) return "—";
   const t = Date.parse(iso);
@@ -24,10 +33,13 @@ function render(result, domain) {
   document.getElementById("reason").textContent =
     result?.reason || "No classification yet for this domain.";
   const confidence = Math.round(Number(result?.confidence || 0) * 100);
-  const reports = Number(result?.community_reports || 0);
+  const paid = Number(result?.community_paid ?? result?.community_reports ?? 0);
+  const free = Number(result?.community_free || 0);
+  const siteType = SITE_TYPE_LABELS[result?.site_type] || SITE_TYPE_LABELS.other;
   document.getElementById("meta").innerHTML = `
+    <div>Type: ${siteType}</div>
     <div>Confidence: ${confidence}%</div>
-    <div>Community reports: ${reports}</div>
+    <div>Paid reports: ${paid} · Free reports: ${free}</div>
     <div>Last verified: ${daysAgo(result?.last_verified_at)}</div>
     <div>Source: ${result?.source || "—"}</div>
   `;
@@ -37,10 +49,36 @@ function render(result, domain) {
 function needsLiveClassify(result) {
   if (!result) return true;
   const verdict = String(result.verdict || "UNKNOWN").toUpperCase();
+  if (result.analysis_status === "skipped") return false;
   if (result.needs_classification) return true;
   if (verdict === "UNKNOWN") return true;
   if (verdict === "FREE" && Number(result.confidence || 0) < 0.7) return true;
   return false;
+}
+
+function applyReportResponse(res, stance, domain) {
+  const paidBtn = document.getElementById("report-paid-btn");
+  const freeBtn = document.getElementById("report-free-btn");
+  const btn = stance === "free" ? freeBtn : paidBtn;
+  const other = stance === "free" ? paidBtn : freeBtn;
+  if (res && res.ok) {
+    if (res.already_reported) {
+      btn.textContent = "Already reported";
+    } else if (res.status_updated) {
+      btn.textContent = "Reported — status updated";
+    } else {
+      const needed = Number(res.reports_needed || 3);
+      const have = stance === "free" ? Number(res.community_free || 0) : Number(res.uniqueReporters || 0);
+      btn.textContent = `Reported (${have}/${needed} needed)`;
+    }
+    btn.disabled = true;
+    other.disabled = true;
+    if (res.result) render(res.result, domain);
+  } else if (res?.rate_limited) {
+    btn.textContent = "Too many reports — try later";
+  } else {
+    btn.textContent = "Report failed — is the server running?";
+  }
 }
 
 document.addEventListener("DOMContentLoaded", async () => {
@@ -57,6 +95,19 @@ document.addEventListener("DOMContentLoaded", async () => {
     render({ verdict: "UNKNOWN", reason: "This page cannot be classified." }, tab.url);
     return;
   }
+
+  chrome.runtime.sendMessage({ type: "GET_MUTED" }, (muteRes) => {
+    const box = document.getElementById("mute-banner");
+    const host = domain.replace(/^www\./, "");
+    box.checked = !!(muteRes?.muted && muteRes.muted[host]);
+  });
+
+  document.getElementById("mute-banner").addEventListener("change", (e) => {
+    chrome.runtime.sendMessage({
+      type: "SET_MUTED",
+      payload: { domain, muted: e.target.checked }
+    });
+  });
 
   chrome.runtime.sendMessage(
     { type: "CHECK_DOMAIN", payload: { domain, url: tab.url }, tabId: tab.id },
@@ -80,7 +131,6 @@ document.addEventListener("DOMContentLoaded", async () => {
 
       chrome.tabs.sendMessage(tab.id, { type: "CLASSIFY_FOR_POPUP" }, (classifyRes) => {
         if (chrome.runtime.lastError || !classifyRes?.ok) {
-          // Content script may not be injected (chrome:// etc.) — try background with empty signals
           chrome.runtime.sendMessage(
             {
               type: "CLASSIFY_UNKNOWN",
@@ -105,7 +155,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     }
   );
 
-  document.getElementById("report-btn").addEventListener("click", () => {
+  function sendReport(stance) {
     chrome.runtime.sendMessage(
       {
         type: "REPORT_SITE",
@@ -113,21 +163,16 @@ document.addEventListener("DOMContentLoaded", async () => {
         payload: {
           domain,
           url: tab.url,
-          note: "Manually reported via popup",
-          report_type: "paywall_before_export",
+          stance,
+          note: stance === "free" ? "User says this site is free" : "Manually reported via popup",
+          report_type: stance === "free" ? "false_positive" : "paywall_before_export",
           reportedAt: Date.now()
         }
       },
-      (res) => {
-        const btn = document.getElementById("report-btn");
-        if (res && res.ok) {
-          btn.textContent = "Reported — thanks";
-          btn.disabled = true;
-          if (res.result) render(res.result, domain);
-        } else {
-          btn.textContent = "Report failed — is the server running?";
-        }
-      }
+      (res) => applyReportResponse(res, stance, domain)
     );
-  });
+  }
+
+  document.getElementById("report-paid-btn").addEventListener("click", () => sendReport("paid"));
+  document.getElementById("report-free-btn").addEventListener("click", () => sendReport("free"));
 });

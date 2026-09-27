@@ -416,5 +416,23 @@
       "version": 1,
       "analysis_status": "ready"
     }
+  },
+  "dashboard.render.com": {
+    "classified_at": 1785444135.1681283,
+    "source": "zero_shot",
+    "result": {
+      "verdict": "FREE",
+      "confidence": 0.65,
+      "reason": "Tool-like page with generic upgrade language, no direct payment gate found.",
+      "features": {
+        "requires_payment_before_download": false
+      },
+      "last_verified_at": "2026-07-30T20:42:15Z",
+      "domain": "dashboard.render.com",
+      "community_reports": 0,
+      "source": "zero_shot",
+      "version": 1,
+      "analysis_status": "ready"
+    }
   }
 }
