@@ -11,7 +11,7 @@
   font-family: "Segoe UI", system-ui, sans-serif;
   font-size: 13px;
   line-height: 1.4;
-  border-bottom: 1px solid rgba(0, 0, 0, 0.08);
+  border-bottom: 1px solid white;
   animation: pwd-slide-down 0.22s ease-out;
 }
 
@@ -74,17 +74,17 @@
 }
 
 #pwd-banner .pwd-report {
-  background: rgba(0, 0, 0, 0.08);
+  background: white;
   color: inherit;
 }
 
 #pwd-banner .pwd-report:hover {
-  background: rgba(0, 0, 0, 0.14);
+  background: white ;
 }
 
 #pwd-banner .pwd-report.pwd-free {
   background: transparent;
-  border: 1px solid rgba(0, 0, 0, 0.18);
+  border: 1px solid rgb(247, 239, 239);
 }
 
 #pwd-banner .pwd-mute {
@@ -106,4 +106,9 @@
   color: inherit;
   font-size: 16px;
   padding: 2px 8px;
+}
+.pwd-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
